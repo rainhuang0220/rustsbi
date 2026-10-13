@@ -1,0 +1,90 @@
+name: rCore-Tutorial
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - ".cargo/**"
+      - ".github/scripts/prototyper-rcore-tutorial-boot.*"
+      - ".github/fixtures/rcore-tutorial-ch2/**"
+      - ".github/workflows/rcore-tutorial.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "rust-toolchain.toml"
+      - "xtask/**"
+      - "library/**"
+      - "firmware/prototyper/**"
+      - "firmware/runtime/**"
+  push:
+    branches: ["main"]
+    paths:
+      - ".cargo/**"
+      - ".github/scripts/prototyper-rcore-tutorial-boot.*"
+      - ".github/fixtures/rcore-tutorial-ch2/**"
+      - ".github/workflows/rcore-tutorial.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "rust-toolchain.toml"
+      - "xtask/**"
+      - "library/**"
+      - "firmware/prototyper/**"
+      - "firmware/runtime/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rcore-tutorial-ch2:
+    name: rCore-Tutorial ch2 (${{ matrix.boot-mode }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        boot-mode: [sbi, u-boot]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install QEMU and guest build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential curl dpkg git make python3 \
+            qemu-system-misc qemu-utils shellcheck
+          qemu-system-riscv64 --version
+
+      - name: Install pinned rCore guest toolchain
+        run: |
+          rustup toolchain install 1.94.0 --profile minimal \
+            --component llvm-tools-preview \
+            --target riscv64gc-unknown-none-elf
+          cargo +1.94.0 install --locked cargo-binutils@0.4.0
+          rust-objcopy --version
+
+      - name: Run offline serial evidence tests
+        run: |
+          shellcheck .github/scripts/prototyper-rcore-tutorial-boot.sh
+          bash -n .github/scripts/prototyper-rcore-tutorial-boot.sh
+          python3 .github/scripts/prototyper-rcore-tutorial-boot.py self-test
+
+      - name: Build RustSBI Prototyper from this revision
+        run: cargo prototyper build
+
+      - name: Boot actual rCore-Tutorial guest
+        run: |
+          .github/scripts/prototyper-rcore-tutorial-boot.sh "${{ matrix.boot-mode }}"
+
+      - name: Upload serial output, boot command and source evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rcore-ch2-${{ matrix.boot-mode }}-logs
+          path: |
+            qemu-logs/rcore-ch2-${{ matrix.boot-mode }}-provenance.log
+            qemu-logs/rcore-ch2-${{ matrix.boot-mode }}-command.json
+            qemu-logs/prototyper-rcore-ch2-${{ matrix.boot-mode }}.serial.log
+          if-no-files-found: warn
